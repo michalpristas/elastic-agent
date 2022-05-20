@@ -1,6 +1,8 @@
 // Use these for links to issue and pulls. Note issues and pulls redirect one to
 // each other on Github, so don't worry too much on using the right prefix.
+:issue-agent: https://github.com/elastic/elastic-agent/issues/
 :issue: https://github.com/elastic/beats/issues/
+:pull-agent: https://github.com/elastic/elastic-agent/pull/
 :pull: https://github.com/elastic/beats/pull/
 
 [[release-notes-7.9.0]]
