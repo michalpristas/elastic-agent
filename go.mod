@@ -5,6 +5,7 @@ go 1.17
 require (
 	github.com/Microsoft/go-winio v0.5.2
 	github.com/antlr/antlr4 v0.0.0-20200820155224-be881fa6b91d
+	github.com/billgraziano/dpapi v0.4.0
 	github.com/blakesmith/ar v0.0.0-20150311145944-8bd4349a67f2
 	github.com/cavaliercoder/go-rpm v0.0.0-20190131055624-7a9c54e3d83e
 	github.com/coreos/go-systemd/v22 v22.3.2
@@ -108,6 +109,7 @@ require (
 	github.com/sergi/go-diff v1.1.0 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/stretchr/objx v0.2.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.9 // indirect
 	github.com/tklauser/numcpus v0.3.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
