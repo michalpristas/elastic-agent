@@ -31,7 +31,6 @@ const (
 )
 
 var redirectPathAllowlist = map[string]struct{}{
-	"":      {},
 	"stats": {},
 	"state": {},
 }
@@ -59,22 +58,22 @@ func processHandler(coord *coordinator.Coordinator, statsHandler func(http.Respo
 
 		componentID = cloudComponentIDToAgentInputType(componentID)
 
-		if isProcessRedirectable(componentID) {
-			// special handling for redirectable processes
-			// apm needs its own output even for no path
-			metricsPath := vars[metricsPathKey]
-			_, ok := redirectPathAllowlist[metricsPath]
-			if !ok {
+		metricsPath := vars[metricsPathKey]
+		if _, ok := redirectPathAllowlist[metricsPath]; ok {
+			if isProcessRedirectable(componentID) {
+				// special handling for redirectable processes
+				// apm needs its own output even for no path
+
+				if strings.HasPrefix(componentID, fleetServerPrefix) && metricsPathKey == "" {
+					// special case, fleet server is expected to return stats right away
+					// removing this would be breaking
+					metricsPath = "stats"
+				}
+
+				return redirectToPath(w, r, componentID, metricsPath, operatingSystem)
+			} else {
 				return errorfWithStatus(http.StatusNotFound, "process specified does not expose metrics")
 			}
-
-			if strings.HasPrefix(componentID, fleetServerPrefix) && metricsPathKey == "" {
-				// special case, fleet server is expected to return stats right away
-				// removing this would be breaking
-				metricsPath = "stats"
-			}
-
-			return redirectToPath(w, r, componentID, metricsPath, operatingSystem)
 		}
 
 		state := coord.State(false)
