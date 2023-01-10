@@ -7,6 +7,7 @@ package lazy
 import (
 	"context"
 	"net/http"
+	"sync"
 
 	"go.elastic.co/apm"
 
@@ -24,10 +25,11 @@ type retrier interface {
 
 // Acker is a lazy acker which performs HTTP communication on commit.
 type Acker struct {
-	log     *logger.Logger
-	acker   batchAcker
-	queue   []fleetapi.Action
-	retrier retrier
+	log       *logger.Logger
+	acker     batchAcker
+	queue     []fleetapi.Action
+	retrier   retrier
+	queueLock sync.Mutex
 }
 
 // Option Acker option function
@@ -62,6 +64,9 @@ func (f *Acker) Ack(ctx context.Context, action fleetapi.Action) (err error) {
 		apm.CaptureError(ctx, err).Send()
 		span.End()
 	}()
+	f.queueLock.Lock()
+	defer f.queueLock.Unlock()
+
 	f.enqueue(action)
 	return nil
 }
@@ -73,12 +78,15 @@ func (f *Acker) Commit(ctx context.Context) (err error) {
 		apm.CaptureError(ctx, err).Send()
 		span.End()
 	}()
-	if len(f.queue) == 0 {
-		return nil
-	}
 
+	f.queueLock.Lock()
 	actions := f.queue
 	f.queue = make([]fleetapi.Action, 0)
+	f.queueLock.Unlock()
+
+	if len(actions) == 0 {
+		return nil
+	}
 
 	f.log.Debugf("lazy acker: ack batch: %s", actions)
 	var resp *fleetapi.AckResponse
