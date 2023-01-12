@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.elastic.co/apm"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/elastic/elastic-agent/internal/pkg/fleetapi"
 	"github.com/elastic/elastic-agent/pkg/core/logger"
@@ -18,6 +19,7 @@ import (
 
 const (
 	defaultCommitPeriod = 15 * time.Second
+	maxPending          = 10
 )
 
 type scheduler interface {
@@ -43,6 +45,7 @@ type Acker struct {
 	queueLock sync.Mutex
 	forceCh   chan struct{}
 	scheduler scheduler
+	sem       *semaphore.Weighted
 }
 
 // Option Acker option function
@@ -57,6 +60,7 @@ func NewAcker(ctx context.Context, baseAcker batchAcker, log *logger.Logger, opt
 		log:       log,
 		scheduler: newTicker(defaultCommitPeriod),
 		forceCh:   make(chan struct{}),
+		sem:       semaphore.NewWeighted(maxPending),
 	}
 
 	for _, opt := range opts {
@@ -99,6 +103,8 @@ func (f *Acker) Commit(ctx context.Context) (err error) {
 	select {
 	case f.forceCh <- struct{}{}:
 	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
 	return nil
 }
@@ -111,9 +117,9 @@ func (f *Acker) run() {
 			close(f.forceCh)
 			return
 		case <-f.forceCh:
-			f.commit()
+			go f.commit()
 		case <-f.scheduler.C():
-			f.commit()
+			go f.commit()
 		}
 	}
 }
@@ -128,6 +134,9 @@ func (f *Acker) commit() {
 		apm.CaptureError(ctx, err).Send()
 		span.End()
 	}()
+
+	f.sem.Acquire(ctx, 1)
+	defer f.sem.Release(1)
 
 	f.queueLock.Lock()
 	if len(f.queue) == 0 {
