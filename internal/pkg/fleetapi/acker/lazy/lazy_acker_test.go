@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -91,9 +92,10 @@ func TestLazyAcker(t *testing.T) {
 
 	// Tests
 	tests := []struct {
-		name        string
-		actions     []fleetapi.Action
-		expectedErr error
+		name                string
+		actions             []fleetapi.Action
+		expectedErr         error
+		commitByTimeTrigger bool
 
 		acker   *testAcker
 		retrier *testRetrier
@@ -148,36 +150,47 @@ func TestLazyAcker(t *testing.T) {
 			}}},
 			retrier: &testRetrier{expectedActions: []fleetapi.Action{&fleetapi.ActionUnknown{ActionID: "2"}}},
 		},
+
+		{
+			name:    "with retrier, duplicated item with item not found, commit by time passed",
+			actions: []fleetapi.Action{&fleetapi.ActionUnknown{ActionID: "1"}, &fleetapi.ActionUnknown{ActionID: "1"}, &fleetapi.ActionUnknown{ActionID: "2"}, &fleetapi.ActionUnknown{ActionID: "3"}},
+			acker: &testAcker{ackResponse: &fleetapi.AckResponse{Errors: true, Items: []fleetapi.AckResponseItem{
+				{Status: http.StatusOK},
+				{Status: http.StatusNotFound},
+				{Status: http.StatusOK},
+			}}},
+			retrier:             &testRetrier{expectedActions: []fleetapi.Action{&fleetapi.ActionUnknown{ActionID: "2"}}},
+			commitByTimeTrigger: true,
+		},
 	}
 
 	// Iterate through tests
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var opts []Option
+			ticker := &testTicker{make(chan time.Time)}
 			if tc.retrier != nil {
 				opts = append(opts, WithRetrier(tc.retrier))
+				opts = append(opts, WithScheduler(ticker))
 			}
 			batchAcker := tc.acker
 			if batchAcker == nil {
 				batchAcker = &testAcker{errResponse: tc.expectedErr}
 			}
-			acker := NewAcker(batchAcker, log, opts...)
+			acker := NewAcker(context.TODO(), batchAcker, log, opts...)
 			for _, action := range tc.actions {
 				err := acker.Ack(ctx, action)
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
-			err := acker.Commit(ctx)
-			if err != nil {
-				if !errors.Is(err, tc.expectedErr) {
-					t.Fatalf("expected error: %v, got: %v", tc.expectedErr, err)
-				}
+
+			if tc.commitByTimeTrigger {
+				ticker.nextPeriod()
 			} else {
-				if tc.expectedErr != nil {
-					t.Fatalf("expected error: %v, got: %v", tc.expectedErr, err)
-				}
+				acker.Commit(ctx)
 			}
+			<-time.After(100 * time.Millisecond)
 
 			// Check that AckBatch is called if actions are not empty
 			diff := cmp.Diff(batchAcker.isCalled, len(tc.actions) > 0)
@@ -201,3 +214,20 @@ func TestLazyAcker(t *testing.T) {
 		})
 	}
 }
+
+type testTicker struct {
+	c chan time.Time
+}
+
+func (t *testTicker) C() <-chan time.Time {
+	return t.c
+}
+
+func (t *testTicker) nextPeriod() {
+	select {
+	case t.c <- time.Now():
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func (t *testTicker) Stop() {}

@@ -124,7 +124,7 @@ func (m *managedConfigManager) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to create acker: %w", err)
 	}
 	retrier := retrier.New(ack, m.log)
-	batchedAcker := lazy.NewAcker(ack, m.log, lazy.WithRetrier(retrier))
+	batchedAcker := lazy.NewAcker(gatewayCtx, ack, m.log, lazy.WithRetrier(retrier))
 	actionAcker := store.NewStateStoreActionAcker(batchedAcker, m.stateStore)
 
 	if err := m.coord.AckUpgrade(ctx, actionAcker); err != nil {
