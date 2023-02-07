@@ -116,6 +116,61 @@ func wrapStrToResp(code int, body string) *http.Response {
 	}
 }
 
+func TestErrorSignals(t *testing.T) {
+	now, _ := time.Parse(time.RFC3339, "2023-01-01T15:10:00Z")
+	reportedErr := errors.New("some error")
+	testCases := []struct {
+		failedAt         time.Time
+		now              time.Time
+		passedErr        error
+		isErrorExpected  bool
+		expectedFailedAt time.Time
+	}{
+		// always report with nil err
+		{time.Time{}, now, nil, true, time.Time{}},
+		{now.Add(-1 * time.Minute), now, nil, true, time.Time{}},
+		{now.Add(-10 * time.Minute), now, nil, true, time.Time{}},
+
+		// update failed at with first error, first error is not reported
+		{time.Time{}, now, reportedErr, false, now},
+
+		// do not modify failed at with second error
+		// within buffer, not reporting
+		{now.Add(-1 * time.Minute), now, reportedErr, false, now.Add(-1 * time.Minute)},
+
+		// do not modify failed at with second error
+		// outside buffer, reporting
+		{now.Add(-10 * time.Minute), now, reportedErr, true, now.Add(-10 * time.Minute)},
+	}
+
+	for i, tc := range testCases {
+		t.Run(fmt.Sprintf("test #%d", i), func(t *testing.T) {
+			errCh := make(chan error)
+			gw := &fleetGateway{
+				failedAt: tc.failedAt,
+				errCh:    errCh,
+			}
+
+			var errorRetrieved bool
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				select {
+				case <-errCh:
+					errorRetrieved = true
+				case <-time.After(100 * time.Millisecond):
+				}
+				wg.Done()
+			}()
+			gw.signalError(tc.passedErr, tc.now)
+			wg.Wait()
+
+			require.Equal(t, tc.isErrorExpected, errorRetrieved)
+			require.Equal(t, tc.expectedFailedAt, gw.failedAt)
+		})
+	}
+}
+
 func TestFleetGateway(t *testing.T) {
 	agentInfo := &testAgentInfo{}
 	settings := &fleetGatewaySettings{

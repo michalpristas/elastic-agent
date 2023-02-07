@@ -29,6 +29,8 @@ const maxUnauthCounter int = 6
 // Const for decraded state or linter complains
 const degraded = "DEGRADED"
 
+const maxFailureTime = 5 * time.Minute
+
 // Default Configuration for the Fleet Gateway.
 var defaultGatewaySettings = &fleetGatewaySettings{
 	Duration: 1 * time.Second,        // time between successful calls
@@ -75,6 +77,7 @@ type fleetGateway struct {
 	stateStore         stateStore
 	errCh              chan error
 	actionCh           chan []fleetapi.Action
+	failedAt           time.Time
 }
 
 // New creates a new fleet gateway
@@ -205,10 +208,10 @@ func (f *fleetGateway) doExecute(ctx context.Context, bo backoff.Backoff) (*flee
 				)
 
 				f.log.Error(err)
-				f.errCh <- err
+				f.signalError(err, time.Now())
 				return nil, err
 			}
-			f.errCh <- err
+			f.signalError(err, time.Now())
 			continue
 		}
 
@@ -217,7 +220,10 @@ func (f *fleetGateway) doExecute(ctx context.Context, bo backoff.Backoff) (*flee
 			f.log.Errorf("Checkin request to fleet-server succeeded after %d failures", f.checkinFailCounter)
 		}
 
+		// reset error counters
 		f.checkinFailCounter = 0
+		f.signalError(nil, time.Now())
+
 		// Request was successful, return the collected actions.
 		return resp, nil
 	}
@@ -225,6 +231,29 @@ func (f *fleetGateway) doExecute(ctx context.Context, bo backoff.Backoff) (*flee
 	// This mean that the next loop was cancelled because of the context, we should return the error
 	// but we should not log it, because we are in the process of shutting down.
 	return nil, ctx.Err()
+}
+
+func (f *fleetGateway) signalError(err error, now time.Time) {
+	if err == nil {
+		// reset counters and mark reported error solved
+		f.failedAt = time.Time{}
+		f.errCh <- nil
+		return
+	}
+
+	if f.failedAt.IsZero() {
+		// remember just first occurence of the error.
+		// no need to report anything
+		f.failedAt = now
+		return
+	}
+
+	if now.Sub(f.failedAt) <= maxFailureTime {
+		// no need to report if it is within an allowed time range
+		return
+	}
+
+	f.errCh <- err
 }
 
 func (f *fleetGateway) convertToCheckinComponents(components []runtime.ComponentComponentState) []fleetapi.CheckinComponent {
